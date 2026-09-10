@@ -33,10 +33,10 @@ steps:
       - 'chmod +x gradlew'
 
   - id: 'test-lint-coverage-build'
-    # Public community image bundling JDK + Android SDK. Google does not
-    # publish an official Android builder image; pin/replace with a
-    # self-maintained image if you need stronger supply-chain guarantees.
-    name: 'docker.io/cirrusci/android-sdk:34'
+    # Self-built image (see .cloudbuild/builder/Dockerfile): JDK 17 + Android
+    # SDK 34. Google publishes no official Android builder image, and it lives
+    # in the same region as the build so the pull is fast.
+    name: 'us-central1-docker.pkg.dev/$PROJECT_ID/android-builders/android-sdk:34'
     entrypoint: 'bash'
     args:
       - '-c'
