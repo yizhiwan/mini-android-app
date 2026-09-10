@@ -128,3 +128,14 @@ sequenceDiagram
 - **Single reused PAT (`github-pr-token`)** for both commenting on PRs and
   pushing the version bump — see `SETUP_GUIDE.md` for the exact permission
   scopes required so the same token covers both flows.
+- **Gradle cache round-tripped through GCS.** Cloud Build starts every build
+  from a clean container, so without a cache each run re-downloads the Gradle
+  distribution (~130 MB, fetched by the wrapper) plus AGP, Kotlin and androidx
+  from Maven Central. The cache is restored before the build and written back
+  after it, covering `wrapper/dists` and `caches/modules-2` under a
+  `GRADLE_USER_HOME` placed inside `/workspace` — the only path shared between
+  build steps. It is stored uncompressed, since the contents are already-
+  deflated jars and gzip would spend CPU on a 2-vCPU worker for almost no size
+  win. The save step runs *before* `enforce-build-status` so that failing
+  builds still warm the cache instead of leaving a run of red builds paying
+  the cold-start cost repeatedly.
