@@ -1,0 +1,32 @@
+# =============================================================================
+# Builder image pipeline.
+#
+# Trigger: push to main, restricted by an included-files filter to
+#          .cloudbuild/builder/** so ordinary app commits never rebuild the
+#          image (see docs/SETUP_GUIDE.md).
+#
+# The image is referenced by a moving :34 tag rather than an immutable
+# per-build tag. Reproducibility comes from the pinned Dockerfile in git
+# (base image tag, cmdline-tools build number, SDK and build-tools versions),
+# not from retaining old image versions in paid storage — a repository
+# cleanup policy deletes untagged versions after 7 days, which keeps the
+# repo inside Artifact Registry's 0.5 GB always-free tier.
+# =============================================================================
+
+steps:
+  - id: 'build-android-builder-image'
+    name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/android-builders/android-sdk:34'
+      - '.cloudbuild/builder'
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/android-builders/android-sdk:34'
+
+options:
+  machineType: 'E2_MEDIUM'
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: '1800s'

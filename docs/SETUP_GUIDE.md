@@ -196,6 +196,89 @@ GitHub's branch protection UI (step 4 below).
 
 ---
 
+## 3d. Builder image
+
+Google publishes no official Android builder image, and the commonly cited
+community ones are a trap: `cirrusci/android-sdk` stops at tag `33`, and
+`cimg/android` ships JDK 21 and runs as a non-root user, which breaks writes
+to Cloud Build's `/workspace`. Referencing an image tag that does not exist
+fails the build *before any step runs*, so the failure-notification step never
+fires and no PR comment appears — the build just dies pulling.
+
+This repo therefore builds its own image from
+[`.cloudbuild/builder/Dockerfile`](../.cloudbuild/builder/Dockerfile):
+JDK 17 + Android SDK 34, everything pinned, hosted in Artifact Registry in the
+same region as the builds that pull it.
+
+Create the registry and seed the first image:
+
+```bash
+gcloud services enable artifactregistry.googleapis.com --project=mini-android-app-prod
+
+gcloud artifacts repositories create android-builders \
+  --project=mini-android-app-prod \
+  --repository-format=docker \
+  --location=us-central1
+
+gcloud builds submit .cloudbuild/builder \
+  --project=mini-android-app-prod \
+  --tag=us-central1-docker.pkg.dev/mini-android-app-prod/android-builders/android-sdk:34 \
+  --timeout=1800s
+
+gcloud artifacts repositories add-iam-policy-binding android-builders \
+  --project=mini-android-app-prod \
+  --location=us-central1 \
+  --member="serviceAccount:cloud-build-mini-android@mini-android-app-prod.iam.gserviceaccount.com" \
+  --role="roles/artifactregistry.reader"
+```
+
+After that, a third trigger rebuilds it automatically whenever the Dockerfile
+changes — and *only* then, thanks to the included-files filter:
+
+```bash
+gcloud builds triggers create github \
+  --project=mini-android-app-prod \
+  --name="builder-image-rebuild" \
+  --repo-owner="your-github-username" \
+  --repo-name="mini-android-app" \
+  --branch-pattern="^main$" \
+  --build-config=".cloudbuild/builder/cloudbuild.yaml" \
+  --included-files=".cloudbuild/builder/**" \
+  --service-account="projects/mini-android-app-prod/serviceAccounts/cloud-build-mini-android@mini-android-app-prod.iam.gserviceaccount.com"
+```
+
+### Keeping image storage free
+
+The image uses a **moving `:34` tag**, not immutable per-build tags.
+Reproducibility comes from the pinned Dockerfile in git, not from retaining
+old image versions in paid storage. A cleanup policy deletes untagged versions
+(the ones orphaned by each rebuild) after 7 days, which holds the repository
+at roughly one version — about 480 MB, inside Artifact Registry's 0.5 GB
+always-free tier:
+
+```bash
+cat > /tmp/cleanup-policy.json <<'EOF'
+[
+  {
+    "name": "delete-untagged-after-7d",
+    "action": { "type": "Delete" },
+    "condition": { "tagState": "UNTAGGED", "olderThan": "7d" }
+  }
+]
+EOF
+
+gcloud artifacts repositories set-cleanup-policies android-builders \
+  --project=mini-android-app-prod \
+  --location=us-central1 \
+  --policy=/tmp/cleanup-policy.json \
+  --no-dry-run
+```
+
+Without that policy the orphaned versions accumulate silently and push the
+repository past the free tier.
+
+---
+
 ## 4. GitHub branch protection on `main`
 
 GitHub → repo → **Settings → Branches → Add branch protection rule**.
@@ -209,7 +292,12 @@ GitHub → repo → **Settings → Branches → Add branch protection rule**.
 - ☑ **Require status checks to pass before merging**
   - ☑ Require branches to be up to date before merging
   - In the search box, select the check produced by the `pr-validation`
-    trigger (visible only after step 3c's throwaway PR has run once).
+    trigger (visible only after step 3c's throwaway PR has run once). Cloud
+    Build reports through GitHub's Checks API, and the check is named
+    `<trigger-name> (<gcp-project-id>)` — for the live setup that is
+    `pr-validation (ikhwan-gcp-project)`. Querying the legacy
+    `/commits/{sha}/status` endpoint shows `pending` forever and is the wrong
+    place to look; use `/commits/{sha}/check-runs`.
 - ☑ **Require conversation resolution before merging** *(optional, recommended)*
 - ☐ **Do not allow bypassing the above settings** — **leave this unchecked**.
   `bump-version.sh` pushes directly to `main` using your PAT, which is tied
