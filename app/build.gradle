@@ -1,0 +1,91 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic versioning — sourced from /version.properties at the repo root.
+// bump-version.sh (run by cloudbuild-postmerge.yaml) increments VERSION_PATCH
+// there after every merge to main, so this file never needs manual edits.
+// ---------------------------------------------------------------------------
+def versionPropsFile = rootProject.file('version.properties')
+def versionProps = new Properties()
+
+if (versionPropsFile.exists()) {
+    versionPropsFile.withInputStream { stream -> versionProps.load(stream) }
+} else {
+    throw new GradleException("version.properties not found at ${versionPropsFile.absolutePath}")
+}
+
+def verMajor = (versionProps['VERSION_MAJOR'] ?: '1').toInteger()
+def verMinor = (versionProps['VERSION_MINOR'] ?: '0').toInteger()
+def verPatch = (versionProps['VERSION_PATCH'] ?: '0').toInteger()
+
+// e.g. 1.0.1 -> 10001. Leaves headroom for MINOR/PATCH up to 99 before MAJOR rolls over.
+def appVersionCode = (verMajor * 10000) + (verMinor * 100) + verPatch
+def appVersionName = "${verMajor}.${verMinor}.${verPatch}"
+
+android {
+    namespace 'com.miniandroid.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.miniandroid.app"
+        minSdk 24
+        targetSdk 34
+        versionCode appVersionCode
+        versionName appVersionName
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        debug {
+            testCoverageEnabled true
+            applicationIdSuffix ".debug"
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+            returnDefaultValues = true
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    // Rename every variant's output APK to mini_android_v{versionName}.apk
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            outputFileName = "mini_android_v${appVersionName}.apk"
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'
+}
+
+apply from: "$rootProject.projectDir/jacoco.gradle"

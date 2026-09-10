@@ -1,0 +1,88 @@
+// JaCoCo coverage configuration for the :app module.
+// Applied from app/build.gradle. Produces HTML + XML reports under
+// app/build/reports/jacoco/jacocoTestReport/, bound to testDebugUnitTest.
+
+apply plugin: 'jacoco'
+
+jacoco {
+    toolVersion = "0.8.11"
+}
+
+tasks.withType(Test).configureEach {
+    jacoco.includeNoLocationClasses = true
+    jacoco.excludes = ['jdk.internal.*']
+}
+
+ext.jacocoFileFilter = [
+        // Android generated code
+        '**/R.class',
+        '**/R$*.class',
+        '**/BuildConfig.*',
+        '**/Manifest*.*',
+        '**/*Test*.*',
+        'android/**/*.*',
+        '**/*$ViewInjector*.*',
+        '**/*$ViewBinder*.*',
+
+        // Dagger / Hilt generated code
+        '**/*_Factory.*',
+        '**/*_MembersInjector.*',
+        '**/*Module_*Factory.*',
+        '**/*Component*.*',
+        '**/*Dagger*.*',
+        '**/Hilt_*.*',
+        '**/*_HiltModules*.*',
+        '**/*_HiltComponents*.*',
+        '**/*_Provide*Factory*.*',
+        '**/dagger/**',
+        '**/hilt/**',
+        '**/*_GeneratedInjector.*',
+
+        // View / Data binding generated code
+        '**/*Binding.*',
+        '**/databinding/**',
+        '**/*JavascriptBridge.class',
+
+        // Kotlin synthetic / DI wiring
+        '**/di/module/**',
+        '**/*$Lambda$*.*',
+        '**/*Companion*.*',
+        '**/*MembersInjector*.*',
+        '**/*_Impl*.*'
+]
+
+def debugTree = fileTree(
+        dir: "${project.layout.buildDirectory.get()}/tmp/kotlin-classes/debug",
+        excludes: jacocoFileFilter
+)
+
+def javaDebugTree = fileTree(
+        dir: "${project.layout.buildDirectory.get()}/intermediates/javac/debug/classes",
+        excludes: jacocoFileFilter
+)
+
+def mainSrcDirs = [
+        "${project.projectDir}/src/main/java",
+        "${project.projectDir}/src/main/kotlin"
+]
+
+tasks.register('jacocoTestReport', JacocoReport) {
+    dependsOn 'testDebugUnitTest'
+
+    group = "Reporting"
+    description = "Generates JaCoCo HTML/XML coverage reports for the debug build."
+
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+        xml.outputLocation.set(file("${layout.buildDirectory.get()}/reports/jacoco/jacocoTestReport/jacocoTestReport.xml"))
+        html.outputLocation.set(file("${layout.buildDirectory.get()}/reports/jacoco/jacocoTestReport/html"))
+    }
+
+    sourceDirectories.setFrom(files(mainSrcDirs))
+    classDirectories.setFrom(files([debugTree, javaDebugTree]))
+    executionData.setFrom(fileTree(dir: layout.buildDirectory.get(), includes: [
+            'jacoco/testDebugUnitTest.exec',
+            'outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec'
+    ]))
+}

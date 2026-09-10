@@ -1,0 +1,75 @@
+# =============================================================================
+# cloudbuild-postmerge.yaml — post-merge version bump pipeline
+#
+# Trigger: Cloud Build GitHub App trigger, event = "Push to a branch",
+#          branch regex = ^main$ (see docs/SETUP_GUIDE.md, section 3).
+#
+# Flow:
+#   1. Guard against the infinite loop the bump commit's own push would
+#      otherwise cause: if the triggering commit message contains
+#      "[skip ci]", the build exits immediately without doing anything.
+#   2. Run bump-version.sh, which increments VERSION_PATCH in
+#      version.properties and pushes the result back to main with
+#      "[skip ci]" in the commit message, using the repo owner's git
+#      identity (never a bot/AI identity).
+# =============================================================================
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/github-pr-token/versions/latest
+      env: 'GITHUB_TOKEN'
+
+steps:
+  - id: 'skip-ci-guard'
+    name: 'gcr.io/cloud-builders/git'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        COMMIT_MSG=$(git log -1 --pretty=%B)
+        echo "Commit message: $COMMIT_MSG"
+        if echo "$COMMIT_MSG" | grep -q '\[skip ci\]'; then
+          echo "Commit contains [skip ci] — this is the bump-version commit itself. Nothing to do."
+          echo "skip" > /workspace/postmerge_action.txt
+        else
+          echo "run" > /workspace/postmerge_action.txt
+        fi
+
+  - id: 'bump-version'
+    name: 'gcr.io/cloud-builders/git'
+    entrypoint: 'bash'
+    secretEnv: ['GITHUB_TOKEN']
+    env:
+      - 'REPO_OWNER_NAME=${_REPO_OWNER_NAME}'
+      - 'REPO_OWNER_EMAIL=${_REPO_OWNER_EMAIL}'
+      - 'GITHUB_OWNER=${_GITHUB_OWNER}'
+      - 'GITHUB_REPO=${_GITHUB_REPO}'
+    args:
+      - '-c'
+      - |
+        set -e
+        if [ "$(cat /workspace/postmerge_action.txt)" = "skip" ]; then
+          echo "Skipping version bump (guarded by [skip ci])."
+          exit 0
+        fi
+        chmod +x bump-version.sh
+        ./bump-version.sh
+
+options:
+  # E2_MEDIUM is the machine type covered by Cloud Build's always-free tier
+  # (120 build-minutes/day). See docs/ARCHITECTURE.md for why this replaces
+  # the originally-specified "E2_STANDARD_2", which is not a valid Cloud
+  # Build machineType value.
+  machineType: 'E2_MEDIUM'
+  logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  # Override these in the trigger configuration (Settings > Substitution
+  # variables) rather than editing this file per-environment.
+  _GITHUB_OWNER: 'your-github-username'
+  _GITHUB_REPO: 'mini-android-app'
+  _REPO_OWNER_NAME: 'your-github-username'
+  _REPO_OWNER_EMAIL: 'you@example.com'
+
+timeout: '300s'
