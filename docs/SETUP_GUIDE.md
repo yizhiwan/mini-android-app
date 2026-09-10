@@ -3,6 +3,21 @@
 Follow these steps in order. Replace `your-github-username`, `mini-android-app-prod`,
 and `mini-android-app` with your actual values throughout.
 
+> **Current deployment.** The commands below use `mini-android-app-prod` as a
+> generic placeholder project ID. The live pipeline for this repo is actually
+> deployed to:
+>
+> | Resource | Value |
+> |---|---|
+> | GCP project | `ikhwan-gcp-project` (display name "CICD Portfolio") |
+> | GitHub repo | `yizhiwan/mini-android-app` |
+> | Build service account | `cloud-build-mini-android@ikhwan-gcp-project.iam.gserviceaccount.com` |
+> | PR trigger | `pr-validation` |
+> | Post-merge trigger | `post-merge-version-bump` |
+>
+> Substitute `ikhwan-gcp-project` for `mini-android-app-prod` when running these
+> commands against the live setup.
+
 ---
 
 ## 0. Prerequisites
@@ -47,29 +62,55 @@ nothing else.
 
 ## 2. Add the PAT to GCP Secret Manager
 
+Create the (empty) secret container first — this involves no token value:
+
 ```bash
-printf '%s' 'ghp_yourFineGrainedTokenHere' | gcloud secrets create github-pr-token \
+gcloud secrets create github-pr-token \
   --project=mini-android-app-prod \
-  --replication-policy="automatic" \
-  --data-file=-
+  --replication-policy="automatic"
 ```
 
-If the secret already exists and you're rotating it:
+Then add the token as a secret version. Prompt for it rather than passing it as
+a command argument, so the token never lands in your shell history. `printf '%s'`
+matters here: a trailing newline inside the secret silently breaks the GitHub
+`Authorization` header.
 
 ```bash
-printf '%s' 'ghp_yourNewTokenHere' | gcloud secrets versions add github-pr-token \
-  --project=mini-android-app-prod \
-  --data-file=-
+read -rsp "Paste GitHub PAT: " TOKEN && echo && printf '%s' "$TOKEN" | gcloud secrets versions add github-pr-token --project=mini-android-app-prod --data-file=- && unset TOKEN
 ```
 
-Grant the Cloud Build service account access to read it:
+Rotating the token later uses the exact same `versions add` command — each run
+adds a new version, and `cloudbuild.yaml` always reads `versions/latest`.
+
+Grant the build service account access to read it.
+
+Note: an organization policy may forbid builds from running as the legacy
+default Cloud Build service account, in which case triggers must specify a
+user-managed one. Create a dedicated least-privilege account rather than
+reusing an existing shared runner:
 
 ```bash
-PROJECT_NUMBER=$(gcloud projects describe mini-android-app-prod --format='value(projectNumber)')
+gcloud iam service-accounts create cloud-build-mini-android \
+  --project=mini-android-app-prod
 
+SA="cloud-build-mini-android@mini-android-app-prod.iam.gserviceaccount.com"
+
+# Required for a build to execute as a user-managed service account
+gcloud projects add-iam-policy-binding mini-android-app-prod \
+  --member="serviceAccount:${SA}" \
+  --role="roles/cloudbuild.builds.builder" \
+  --condition=None
+
+# Required because both build configs set options.logging: CLOUD_LOGGING_ONLY
+gcloud projects add-iam-policy-binding mini-android-app-prod \
+  --member="serviceAccount:${SA}" \
+  --role="roles/logging.logWriter" \
+  --condition=None
+
+# Scoped to this one secret rather than granted project-wide
 gcloud secrets add-iam-policy-binding github-pr-token \
   --project=mini-android-app-prod \
-  --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+  --member="serviceAccount:${SA}" \
   --role="roles/secretmanager.secretAccessor"
 ```
 
@@ -114,6 +155,32 @@ gcloud builds triggers create github \
 Set `_REPO_OWNER_NAME` / `_REPO_OWNER_EMAIL` to the identity you want on the
 automated bump commits — typically your own name and the email tied to
 `ikhwanletter91@gmail.com` or whichever address you commit under normally.
+
+### 3b-i. Gotchas worth knowing
+
+- **The repo must be linked to the project first.** Installing the Cloud Build
+  GitHub App on your GitHub account (even with "All repositories" access) is
+  *not* sufficient — Cloud Build keeps its own per-project record of which
+  repos are connected. Until `mini-android-app` appears under Cloud Build →
+  Repositories for this project, both `triggers create github` commands fail
+  with a bare `INVALID_ARGUMENT: Request contains an invalid argument.` and no
+  further detail. Connect it via Cloud Console → Cloud Build → Triggers →
+  Connect Repository, or inline from the Create Trigger form.
+- **Pass `--service-account` if an org policy requires one** (see section 2):
+  ```
+  --service-account="projects/mini-android-app-prod/serviceAccounts/cloud-build-mini-android@mini-android-app-prod.iam.gserviceaccount.com"
+  ```
+- **Verify the branch regex after creating a trigger from a Windows shell.**
+  The leading `^` in `--branch-pattern="^main$"` can be silently eaten by the
+  `gcloud.cmd` batch wrapper (`^` is cmd.exe's escape character), leaving the
+  pattern as `main$` — which matches *any* branch ending in "main", e.g.
+  `release-main`. Check with `gcloud builds triggers describe <name>` and fix
+  file-based (shell-free) if needed:
+  ```bash
+  gcloud beta builds triggers export <name> --destination=trigger.yaml
+  # edit the branch: field, then
+  gcloud beta builds triggers import --source=trigger.yaml
+  ```
 
 ### 3c. Verify
 
@@ -187,4 +254,14 @@ commit land on `main` within a few minutes.
 
   gcloud storage buckets update gs://mini-android-app-prod-cloudbuild-artifacts \
     --lifecycle-file=/tmp/lifecycle.json
+
+  gcloud storage buckets add-iam-policy-binding gs://mini-android-app-prod-cloudbuild-artifacts \
+    --member="serviceAccount:cloud-build-mini-android@mini-android-app-prod.iam.gserviceaccount.com" \
+    --role="roles/storage.objectAdmin"
   ```
+
+  Create this bucket **before** the first PR build. `cloudbuild.yaml`'s
+  `artifacts` block fails the whole build if the destination bucket is
+  missing — so a PR with passing tests would still report a red status check.
+  Keep the bucket in a US region: GCS's always-free 5 GB applies to
+  `us-central1`/`us-east1`/`us-west1` only, not to `asia-*`.
