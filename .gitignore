@@ -20,3 +20,6 @@ build_log.txt
 *.jks
 *.keystore
 keystore.properties
+
+# Portfolio write-up, kept out of the repo deliberately
+progress.md
