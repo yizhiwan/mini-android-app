@@ -25,6 +25,25 @@ availableSecrets:
       env: 'GITHUB_TOKEN'
 
 steps:
+  # Restore the Gradle cache before anything else. Best-effort: a cache miss
+  # is a cold build, never a failure.
+  - id: 'restore-gradle-cache'
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        mkdir -p /workspace/.gradle
+        if gcloud storage cp "gs://$PROJECT_ID-cloudbuild-artifacts/gradle-cache/gradle-cache.tar" /workspace/gradle-cache.tar 2>/dev/null; then
+          tar -xf /workspace/gradle-cache.tar -C /workspace/.gradle
+          rm -f /workspace/gradle-cache.tar
+          echo "Gradle cache restored."
+          du -sh /workspace/.gradle 2>/dev/null || true
+        else
+          echo "No Gradle cache found — this build will be cold."
+        fi
+
   - id: 'prepare-gradlew'
     name: 'gcr.io/cloud-builders/git'
     entrypoint: 'bash'
@@ -38,6 +57,11 @@ steps:
     # in the same region as the build so the pull is fast.
     name: 'us-central1-docker.pkg.dev/$PROJECT_ID/android-builders/android-sdk:34'
     entrypoint: 'bash'
+    # GRADLE_USER_HOME must sit under /workspace: only that path is shared
+    # between build steps, so the cache restored above would otherwise be
+    # invisible here.
+    env:
+      - 'GRADLE_USER_HOME=/workspace/.gradle'
     args:
       - '-c'
       - |
@@ -136,6 +160,35 @@ steps:
             print(f"Failed to post PR comment: {e}", file=sys.stderr)
             sys.exit(0)
         PYEOF
+
+  # Runs before enforce-build-status deliberately: a failing build should still
+  # warm the cache, otherwise a run of red builds keeps paying the cold-start
+  # download cost.
+  - id: 'save-gradle-cache'
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        cd /workspace/.gradle 2>/dev/null || { echo "No GRADLE_USER_HOME to cache."; exit 0; }
+
+        CACHE_PATHS=""
+        [ -d wrapper/dists ] && CACHE_PATHS="$$CACHE_PATHS wrapper/dists"
+        [ -d caches/modules-2 ] && CACHE_PATHS="$$CACHE_PATHS caches/modules-2"
+
+        if [ -z "$$CACHE_PATHS" ]; then
+          echo "Nothing worth caching yet."
+          exit 0
+        fi
+
+        # Uncompressed on purpose: the cache is almost entirely jars, which are
+        # already deflated, so gzip would burn CPU on a 2-vCPU worker for a
+        # negligible size win.
+        tar -cf /workspace/gradle-cache.tar $$CACHE_PATHS
+        ls -lh /workspace/gradle-cache.tar
+        gcloud storage cp /workspace/gradle-cache.tar "gs://$PROJECT_ID-cloudbuild-artifacts/gradle-cache/gradle-cache.tar"
+        echo "Gradle cache saved."
 
   - id: 'enforce-build-status'
     name: 'gcr.io/cloud-builders/git'
