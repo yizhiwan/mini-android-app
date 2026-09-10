@@ -43,7 +43,7 @@ steps:
       - |
         set +e
         ./gradlew test lint jacocoTestReport assembleDebug > build_log.txt 2>&1
-        echo $? > /workspace/build_exit_code.txt
+        echo $$? > /workspace/build_exit_code.txt
         echo "----- build_log.txt (tail) -----"
         tail -n 100 build_log.txt
         exit 0
@@ -56,14 +56,14 @@ steps:
       - '-c'
       - |
         set -e
-        EXIT_CODE=$(cat /workspace/build_exit_code.txt)
+        EXIT_CODE=$$(cat /workspace/build_exit_code.txt)
 
-        if [ "$EXIT_CODE" = "0" ]; then
+        if [ "$$EXIT_CODE" = "0" ]; then
           echo "Build succeeded — no failure comment needed."
           exit 0
         fi
 
-        echo "Build failed with exit code $EXIT_CODE — posting comment to the PR."
+        echo "Build failed with exit code $$EXIT_CODE — posting comment to the PR."
 
         python3 - <<'PYEOF'
         import json
@@ -143,11 +143,11 @@ steps:
     args:
       - '-c'
       - |
-        EXIT_CODE=$(cat /workspace/build_exit_code.txt)
-        if [ "$EXIT_CODE" != "0" ]; then
+        EXIT_CODE=$$(cat /workspace/build_exit_code.txt)
+        if [ "$$EXIT_CODE" != "0" ]; then
           echo "Failing the Cloud Build run so the GitHub status check reports failure."
         fi
-        exit $EXIT_CODE
+        exit $$EXIT_CODE
 
 artifacts:
   objects:

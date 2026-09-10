@@ -27,9 +27,9 @@ steps:
       - '-c'
       - |
         set -e
-        COMMIT_MSG=$(git log -1 --pretty=%B)
-        echo "Commit message: $COMMIT_MSG"
-        if echo "$COMMIT_MSG" | grep -q '\[skip ci\]'; then
+        COMMIT_MSG=$$(git log -1 --pretty=%B)
+        echo "Commit message: $$COMMIT_MSG"
+        if echo "$$COMMIT_MSG" | grep -q '\[skip ci\]'; then
           echo "Commit contains [skip ci] — this is the bump-version commit itself. Nothing to do."
           echo "skip" > /workspace/postmerge_action.txt
         else
@@ -49,7 +49,7 @@ steps:
       - '-c'
       - |
         set -e
-        if [ "$(cat /workspace/postmerge_action.txt)" = "skip" ]; then
+        if [ "$$(cat /workspace/postmerge_action.txt)" = "skip" ]; then
           echo "Skipping version bump (guarded by [skip ci])."
           exit 0
         fi
