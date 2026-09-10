@@ -33,7 +33,7 @@ one-line change — just note it falls outside the free tier.
 1. **Developer opens a PR** targeting `main`.
 2. GitHub notifies Cloud Build via the installed GitHub App, which fires the
    **PR trigger** and runs `cloudbuild.yaml` on an `E2_MEDIUM` worker.
-3. The pipeline runs `./gradlew test lint jacocoTestReport assembleDebug`
+3. The pipeline runs `./gradlew test jacocoTestReport assembleDebug`
    as a single step, redirecting all output to `build_log.txt`. The step
    captures Gradle's exit code to a file instead of failing immediately —
    this lets the pipeline still run the notification step below even on
@@ -75,7 +75,7 @@ sequenceDiagram
     rect rgb(235, 245, 255)
     note over CB: Validation steps
     CB->>CB: chmod +x gradlew
-    CB->>CB: ./gradlew test lint jacocoTestReport assembleDebug<br/>(capture exit code + build_log.txt)
+    CB->>CB: ./gradlew test jacocoTestReport assembleDebug<br/>(capture exit code + build_log.txt)
     end
 
     alt Build fails
@@ -128,6 +128,14 @@ sequenceDiagram
 - **Single reused PAT (`github-pr-token`)** for both commenting on PRs and
   pushing the version bump — see `SETUP_GUIDE.md` for the exact permission
   scopes required so the same token covers both flows.
+- **Android lint is deliberately not run in PR validation.** With a warm
+  Gradle cache the validation step still took 8m 26s, which showed the
+  bottleneck was task execution rather than dependency downloads — and lint is
+  among the most expensive tasks on a 2-vCPU worker. It is omitted to keep PR
+  feedback fast and stay well inside the 120 free build-minutes/day. The
+  trade-off is real: nothing in CI currently enforces lint, so it has to be
+  run locally (`./gradlew lint`) or added to a slower non-blocking pipeline if
+  that stops being acceptable.
 - **Gradle cache round-tripped through GCS.** Cloud Build starts every build
   from a clean container, so without a cache each run re-downloads the Gradle
   distribution (~130 MB, fetched by the wrapper) plus AGP, Kotlin and androidx

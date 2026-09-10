@@ -6,7 +6,7 @@
 #
 # Flow:
 #   1. Make gradlew executable.
-#   2. Run unit tests, lint, JaCoCo coverage and an assembleDebug build in one
+#   2. Run unit tests, JaCoCo coverage and an assembleDebug build in one
 #      shot, capturing full output to build_log.txt. The step never fails on
 #      its own (set +e) — the real Gradle exit code is written to a file so
 #      later steps can react to it without Cloud Build aborting the build
@@ -51,7 +51,7 @@ steps:
       - '-c'
       - 'chmod +x gradlew'
 
-  - id: 'test-lint-coverage-build'
+  - id: 'test-coverage-build'
     # Self-built image (see .cloudbuild/builder/Dockerfile): JDK 17 + Android
     # SDK 34. Google publishes no official Android builder image, and it lives
     # in the same region as the build so the pull is fast.
@@ -66,7 +66,7 @@ steps:
       - '-c'
       - |
         set +e
-        ./gradlew test lint jacocoTestReport assembleDebug > build_log.txt 2>&1
+        ./gradlew test jacocoTestReport assembleDebug > build_log.txt 2>&1
         echo $$? > /workspace/build_exit_code.txt
         echo "----- build_log.txt (tail) -----"
         tail -n 100 build_log.txt
